@@ -243,7 +243,9 @@ export async function generateObjectMarkdown(objectName: string, objectXmlDefini
     '',
     '<!-- Apex table -->',
     '',
-    '<!-- Pages table -->'
+    '<!-- Pages table -->',
+    '',
+    '<!-- LWC table -->'
   ];
   mdLines.push("");
   // Footer
@@ -414,6 +416,131 @@ export async function generateMkDocsHTML() {
       throw new SfError('MkDocs build with docker failed:\n' + mkdocsBuildRes.stderr + "\n" + mkdocsBuildRes.stdout);
     }
   }
+}
+
+/**
+ * Generates markdown documentation for a Lightning Web Component
+ * @param componentName The name of the LWC component
+ * @param jsFile Path to the JS file
+ * @param htmlFile Path to the HTML template file (optional)
+ * @param metaFile Path to the metadata XML file (optional)
+ * @param outputFile Path to the output markdown file
+ * @returns Path to the generated markdown file
+ */
+export async function generateLwcComponentMarkdown(componentName: string, jsFile: string, htmlFile: string | null, metaFile: string | null, outputFile: string): Promise<string> {
+  // Import jsdoc-to-markdown dynamically
+  const jsdoc2md = (await import('jsdoc-to-markdown')).default;
+  
+  // Initialize the markdown content array
+  const mdLines: string[] = [];
+  
+  // Add component title
+  mdLines.push(`# ${componentName}`);
+  mdLines.push('');
+  
+  // Process metadata if available
+  if (metaFile && fs.existsSync(metaFile)) {
+    const metaContent = await fs.readFile(metaFile, 'utf8');
+    const metaData = new XMLParser().parse(metaContent)?.LightningComponentBundle || {};
+    
+    // Add component description from metadata if available
+    if (metaData.description) {
+      mdLines.push('## Description');
+      mdLines.push('');
+      mdLines.push(metaData.description);
+      mdLines.push('');
+    }
+    
+    // Add component metadata table
+    mdLines.push('## Metadata');
+    mdLines.push('');
+    mdLines.push(buildGenericMarkdownTable(metaData, 
+      ["apiVersion", "isExposed", "masterLabel", "targets"], 
+      'Lightning Web Component attributes', []));
+    mdLines.push('');
+  }
+  
+  // Add placeholder for AI-generated description
+  mdLines.push('<!-- LWC description -->');
+  mdLines.push('');
+  
+  // Generate JSDoc documentation using jsdoc-to-markdown
+  try {
+    const jsdocOutput = await jsdoc2md.render({ files: jsFile });
+    
+    if (jsdocOutput && jsdocOutput.trim()) {
+      mdLines.push('## API Documentation');
+      mdLines.push('');
+      mdLines.push(jsdocOutput);
+      mdLines.push('');
+    } else {
+      mdLines.push('## API Documentation');
+      mdLines.push('');
+      mdLines.push('*No JSDoc documentation available for this component.*');
+      mdLines.push('');
+    }
+  } catch (error: any) {
+    uxLog(this, c.yellow(`Error generating JSDoc for ${componentName}: ${error.message}`));
+    mdLines.push('## API Documentation');
+    mdLines.push('');
+    mdLines.push('*Error generating JSDoc documentation for this component.*');
+    mdLines.push('');
+  }
+  
+  // Get the source code
+  const jsContent = await fs.readFile(jsFile, 'utf8');
+  
+  // Add footer
+  mdLines.push('');
+  mdLines.push(`_Documentation generated with [sfdx-hardis](${CONSTANTS.DOC_URL_ROOT})_`);
+  
+  // Apply AI descriptions if available
+  let markdownContent = mdLines.join('\n') + '\n';
+  markdownContent = await completeLwcDocWithAiDescription(markdownContent, componentName, jsContent);
+  
+  // Write the file
+  await fs.ensureDir(path.dirname(outputFile));
+  await fs.writeFile(outputFile, getMetaHideLines() + markdownContent);
+  
+  uxLog(this, c.green(`Successfully generated ${componentName} documentation into ${outputFile}`));
+  
+  return outputFile;
+}
+
+/**
+ * Enhances LWC component documentation with AI-generated descriptions
+ * @param lwcMarkdownDoc Existing markdown documentation
+ * @param componentName Name of the LWC component
+ * @param jsCode JavaScript code of the component
+ * @returns Enhanced markdown documentation
+ */
+async function completeLwcDocWithAiDescription(lwcMarkdownDoc: string, componentName: string, jsCode: string): Promise<string> {
+  const aiCache = await UtilsAi.findAiCache("PROMPT_DESCRIBE_LWC", [jsCode], componentName);
+  if (aiCache.success === true) {
+    uxLog(this, c.grey("Used AI cache for LWC component description (set IGNORE_AI_CACHE=true to force call to AI)"));
+    const replaceText = `## AI-Generated Description\n\n<!-- Cache file: ${aiCache.aiCacheDirFile} -->\n\n${aiCache.cacheText || ""}`;
+    return lwcMarkdownDoc.replace("<!-- LWC description -->", replaceText);
+  }
+  if (AiProvider.isAiAvailable()) {
+    // Invoke AI Service
+    const prompt = AiProvider.buildPrompt("PROMPT_DESCRIBE_LWC", { "COMPONENT_NAME": componentName, "LWC_CODE": jsCode });
+    const aiResponse = await AiProvider.promptAi(prompt, "PROMPT_DESCRIBE_LWC");
+    // Replace description in markdown
+    if (aiResponse?.success) {
+      let responseText = aiResponse.promptResponse || "No AI description available";
+      if (responseText.startsWith("##")) {
+        responseText = responseText.split("\n").slice(1).join("\n");
+      }
+      await UtilsAi.writeAiCache("PROMPT_DESCRIBE_LWC", [jsCode], componentName, responseText);
+      const replaceText = `## AI-Generated Description\n\n<!-- Cache file: ${aiCache.aiCacheDirFile} -->\n\n${responseText}`;
+      const lwcMarkdownDocUpdated = lwcMarkdownDoc.replace("<!-- LWC description -->", replaceText);
+      return lwcMarkdownDocUpdated;
+    }
+  }
+  else {
+    return lwcMarkdownDoc.replace("<!-- LWC description -->", `Activate [AI configuration](${CONSTANTS.DOC_URL_ROOT}/salesforce-ai-setup/) to generate AI description`);
+  }
+  return lwcMarkdownDoc;
 }
 
 export async function installMkDocs() {

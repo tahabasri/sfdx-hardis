@@ -7,7 +7,8 @@ export type PromptTemplate =
   "PROMPT_DESCRIBE_OBJECT" |
   "PROMPT_COMPLETE_OBJECT_ATTRIBUTES_MD" |
   "PROMPT_DESCRIBE_APEX" |
-  "PROMPT_DESCRIBE_PAGE"
+  "PROMPT_DESCRIBE_PAGE" |
+  "PROMPT_DESCRIBE_LWC"
   ;
 
 export function buildPromptFromTemplate(template: PromptTemplate, variables: object): string {
@@ -218,6 +219,43 @@ Caution: Redact any sensitive information and replace with \`[REDACTED]\`. Be as
 {{PAGE_XML}}
 
 Caution: Redact any sensitive information and replace with \`[REDACTED]\`. Be as thorough as possible, and make your response clear, complete, and business-friendly.
+`
+    }
+  },
+  "PROMPT_DESCRIBE_LWC": {
+    variables: ["COMPONENT_NAME", "LWC_CODE"],
+    text: {
+      "en": `You are a skilled Salesforce developer working on a Lightning Web Component. Your goal is to summarize the functionality and behavior of the LWC component "{{COMPONENT_NAME}}" in plain English, providing a detailed explanation suitable for developers and technical business users.
+
+### Instructions:
+
+1. **Contextual Overview**:
+    - Begin by summarizing the role and purpose of the LWC component.
+    - Explain its main functionality and how it fits into the broader Salesforce application.
+    - Describe any key user interactions or business processes it supports.
+
+2. **Technical Details**:
+    - Identify and explain the key features of the component:
+      - Properties, attributes, and their purpose
+      - Public methods and their functionality
+      - Events it dispatches or listens for
+      - Data handling or API calls
+      - Any notable custom logic or algorithms
+    - Note any dependencies on other components, libraries, or services.
+
+3. **Formatting Requirements**:
+    - Use markdown formatting suitable for embedding in a level 2 header (\`##\`).
+    - Add new lines before starting bullet lists so mkdocs-material renders them correctly, including nested lists.
+    - Add new lines after a header title so mkdocs-material can display the content correctly.
+    - Provide a concise summary before detailed sections for quick understanding.
+    - Use code snippets if needed to illustrate usage examples, but keep them minimal.
+
+### Reference Data:
+
+- The JavaScript code for the LWC component "{{COMPONENT_NAME}}" is:
+{{LWC_CODE}}
+
+Caution: Redact any sensitive information like API keys, tokens, or passwords and replace with \`[REDACTED]\`. Be thorough, clear, and business-friendly in your explanation.
 `
     }
   }

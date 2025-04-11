@@ -48,6 +48,7 @@ To just generate HTML pages that you can host anywhere, run \`mkdocs build -v ||
 - Flows
 - Apex
 - Lightning Pages
+- Lightning Web Components
 - SFDX-Hardis Config
 - Branches & Orgs
 - Installed Packages
@@ -142,6 +143,7 @@ ${this.htmlInstructions}
   protected apexDescriptions: any[] = [];
   protected flowDescriptions: any[] = [];
   protected pageDescriptions: any[] = [];
+  protected lwcDescriptions: any[] = [];
   protected objectDescriptions: any[] = [];
   protected objectFiles: string[];
   protected allObjectsNames: string[];
@@ -167,6 +169,7 @@ ${this.htmlInstructions}
       "- [Flows](flows/index.md)",
       "- [Apex](apex/index.md)",
       "- [Lightning Pages](pages/index.md)",
+      "- [Lightning Web Components](lwc/index.md)",
       "- [SFDX-Hardis Config](sfdx-hardis-params.md)",
       "- [Branches & Orgs](sfdx-hardis-branches-and-orgs.md)",
       "- [Installed Packages](installed-packages.md)",
@@ -234,6 +237,11 @@ ${this.htmlInstructions}
     // List flows & generate doc
     if (!(process?.env?.GENERATE_OBJECTS_DOC === 'false')) {
       await this.generateObjectsDocumentation();
+    }
+
+    // Generate LWC doc
+    if (!(process?.env?.GENERATE_LWC_DOC === 'false')) {
+      await this.generateLwcDocumentation();
     }
 
     // Write output index file
@@ -414,7 +422,7 @@ ${Project2Markdown.htmlInstructions}
     // Remove deprecated Flows History if found
     mkdocsYml.nav = mkdocsYml.nav.filter(navItem => !navItem["Flows History"]);
     // Order nav items with this elements in first
-    const firstItemsInOrder = ["Home", "Object Model", "Objects", "Flows", "Apex", "Lightning Pages", "SFDX-Hardis Config", "Branches & Orgs", "Installed Packages", "Manifests"];
+    const firstItemsInOrder = ["Home", "Object Model", "Objects", "Flows", "Apex", "Lightning Pages", "Lightning Web Components", "SFDX-Hardis Config", "Branches & Orgs", "Installed Packages", "Manifests"];
     mkdocsYml.nav = firstItemsInOrder.map(item => mkdocsYml.nav.find(navItem => Object.keys(navItem)[0] === item)).filter(item => item).concat(mkdocsYml.nav.filter(navItem => !firstItemsInOrder.includes(Object.keys(navItem)[0])));
     // Update mkdocs file
     await writeMkDocsFile(mkdocsYmlFile, mkdocsYml);
@@ -452,6 +460,9 @@ ${Project2Markdown.htmlInstructions}
       await replaceInFile(objectMdFile, '<!-- Apex table -->', relatedApexTable.join("\n"));
       const relatedPages = this.buildPagesTable('../pages/', objectName);
       await replaceInFile(objectMdFile, '<!-- Pages table -->', relatedPages.join("\n"));
+      // LWC Components Table
+      const relatedLwcTable = this.buildLwcTable('../lwc/', objectName);
+      await replaceInFile(objectMdFile, '<!-- LWC table -->', relatedLwcTable.join("\n"));
       this.objectDescriptions.push({
         name: objectName,
         label: objectXmlParsed?.CustomObject?.label || "",
@@ -932,4 +943,120 @@ ${Project2Markdown.htmlInstructions}
     ];
   }
 
+  /**
+   * Generates documentation for Lightning Web Components
+   * This method finds all LWC components in the project and generates markdown documentation for each
+   */
+  private async generateLwcDocumentation() {
+    uxLog(this, c.cyan("Generating Lightning Web Component documentation... (if you don't want it, define GENERATE_LWC_DOC=false in your environment variables)"));
+    
+    // Import the listLwcComponents function
+    const { listLwcComponents } = await import('../../../common/utils/projectUtils.js');
+    const { generateLwcComponentMarkdown } = await import('../../../common/docBuilder/docUtils.js');
+    
+    const packageDirs = this.project?.getPackageDirectories() || [];
+    const lwcComponents = await listLwcComponents(packageDirs);
+    
+    if (lwcComponents.length === 0) {
+      uxLog(this, c.yellow("No Lightning Web Components found in the project"));
+      return;
+    }
+    
+    // Create a menu structure for the components
+    const lwcForMenu: any = { "All Lightning Web Components": "lwc/index.md" };
+    
+    // Create directory for LWC documentation
+    await fs.ensureDir(path.join(this.outputMarkdownRoot, "lwc"));
+    
+    // Generate documentation for each component
+    for (const component of lwcComponents) {
+      uxLog(this, c.cyan(`Generating documentation for LWC component: ${component.name}`));
+      
+      const outputFile = path.join(this.outputMarkdownRoot, "lwc", `${component.name}.md`);
+      
+      try {
+        await generateLwcComponentMarkdown(
+          component.name,
+          component.jsFile,
+          component.htmlFile,
+          component.metaFile,
+          outputFile
+        );
+        
+        // Add to descriptions array for index table
+        const jsContent = await fs.readFile(component.jsFile, "utf8");
+        let apiTarget = "";
+        let description = "";
+        
+        // Try to extract basic info from the metadata file if it exists
+        if (component.metaFile && fs.existsSync(component.metaFile)) {
+          const metaContent = await fs.readFile(component.metaFile, "utf8");
+          const metaData = new XMLParser().parse(metaContent)?.LightningComponentBundle || {};
+          
+          if (metaData.targets) {
+            if (Array.isArray(metaData.targets.target)) {
+              apiTarget = metaData.targets.target.join(", ");
+            } else {
+              apiTarget = metaData.targets.target || "";
+            }
+          }
+          
+          description = metaData.description || "";
+        }
+        
+        // Add component to menu and descriptions
+        lwcForMenu[component.name] = `lwc/${component.name}.md`;
+        this.lwcDescriptions.push({
+          name: component.name,
+          targets: apiTarget,
+          description: description,
+          impactedObjects: this.allObjectsNames.filter(objectName => jsContent.includes(`${objectName}`)).join(", ")
+        });
+      } catch (error: any) {
+        uxLog(this, c.yellow(`Error generating documentation for ${component.name}: ${error.message}`));
+      }
+    }
+    
+    // Create index file with table of components
+    const lwcTableLines = this.buildLwcTable('');
+    const lwcIndexFile = path.join(this.outputMarkdownRoot, "lwc", "index.md");
+    await fs.writeFile(lwcIndexFile, getMetaHideLines() + lwcTableLines.join("\n") + `\n\n${this.footer}\n`);
+    
+    // Add to navigation
+    this.addNavNode("Lightning Web Components", lwcForMenu);
+    
+    uxLog(this, c.green(`Successfully generated documentation for ${lwcComponents.length} Lightning Web Components`));
+  }
+  
+  /**
+   * Builds a markdown table of Lightning Web Components
+   * @param prefix Path prefix for links
+   * @param filterObject Optional object name to filter components by
+   * @returns Array of markdown lines
+   */
+  private buildLwcTable(prefix: string, filterObject: string | null = null) {
+    const filteredComponents = filterObject ? 
+      this.lwcDescriptions.filter(component => component.impactedObjects.includes(filterObject)) : 
+      this.lwcDescriptions;
+      
+    if (filteredComponents.length === 0) {
+      return [];
+    }
+    
+    const lines: string[] = [];
+    lines.push(...[
+      filterObject ? "## Related Lightning Web Components" : "## Lightning Web Components",
+      "",
+      "| Component Name | Targets | Description |",
+      "| :------------- | :------ | :---------- |"
+    ]);
+    
+    for (const component of filteredComponents) {
+      const componentNameCell = `[${component.name}](${prefix}${component.name}.md)`;
+      lines.push(`| ${componentNameCell} | ${component.targets || ''} | ${mdTableCell(component.description)} |`);
+    }
+    
+    lines.push("");
+    return lines;
+  }
 }

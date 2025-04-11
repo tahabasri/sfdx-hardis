@@ -149,3 +149,59 @@ export function returnApexType(apexCode: string) {
                               apexContentlower.includes("public class soaprequest") ? "SOAP" :
                                 "Class";
 }
+
+/**
+ * Lists all LWC components in the project
+ * @param packageDirs Array of package directories to search in
+ * @returns Array of objects with info about each LWC component
+ */
+export async function listLwcComponents(packageDirs) {
+  const lwcComponents: any[] = [];
+  const skippedComponents: string[] = [];
+  
+  for (const packageDir of packageDirs || []) {
+    // First find all LWC component directories
+    const lwcFolders = await glob("**/lwc/*", { cwd: packageDir.path, ignore: GLOB_IGNORE_PATTERNS });
+    
+    for (const lwcFolder of lwcFolders) {
+      const folderPath = path.join(packageDir.path, lwcFolder).replace(/\\/g, '/');
+      
+      // Skip if not a directory
+      if (!fs.lstatSync(folderPath).isDirectory()) {
+        continue;
+      }
+      
+      // Find the main JS file - this would be the one with the same name as the folder
+      const componentName = path.basename(folderPath);
+      const jsFilePath = path.join(folderPath, `${componentName}.js`);
+      
+      if (fs.existsSync(jsFilePath)) {
+        // Check if it's not a managed component (has namespace prefix)
+        if (componentName.includes('__')) {
+          skippedComponents.push(jsFilePath);
+        } else {
+          // Find additional files like the HTML template and metadata
+          const htmlFilePath = path.join(folderPath, `${componentName}.html`);
+          const metaFilePath = path.join(folderPath, `${componentName}.js-meta.xml`);
+          
+          lwcComponents.push({
+            name: componentName,
+            jsFile: jsFilePath,
+            htmlFile: fs.existsSync(htmlFilePath) ? htmlFilePath : null,
+            metaFile: fs.existsSync(metaFilePath) ? metaFilePath : null,
+            folder: folderPath
+          });
+        }
+      }
+    }
+  }
+  
+  if (skippedComponents.length > 0) {
+    uxLog(this, c.yellow(`Skipped ${skippedComponents.length} managed LWC components:`));
+    for (const skippedComponent of skippedComponents.sort()) {
+      uxLog(this, c.yellow(`  ${skippedComponent}`));
+    }
+  }
+  
+  return lwcComponents.sort((a, b) => a.name.localeCompare(b.name));
+}
